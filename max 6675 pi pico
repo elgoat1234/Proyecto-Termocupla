@@ -1,0 +1,122 @@
+#include "pico/stdlib.h"
+#include "hardware/spi.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+#define MAX6675_CLOCK_SPEED 4000000
+#define SPI_PORT spi0
+#define CS_PIN 17
+
+typedef struct {
+    spi_inst_t *spi;
+    uint cs_pin;
+    int scale;
+} MAX6675;
+
+typedef enum {
+    MAX6675_CELSIUS,
+    MAX6675_FAHRENHEIT,
+    MAX6675_KELVIN
+} MAX6675TempScale;
+
+MAX6675 *MAX6675Setup(int SPIChannel) {
+    MAX6675 *max6675 = (MAX6675 *)malloc(sizeof(MAX6675));
+
+    if (!max6675) {
+        return NULL; // Error allocating memory
+    }
+
+    max6675->spi = SPI_PORT;
+    max6675->cs_pin = CS_PIN;
+    max6675->scale = MAX6675_CELSIUS;
+
+    spi_init(max6675->spi, MAX6675_CLOCK_SPEED);
+    gpio_set_function(max6675->cs_pin, GPIO_FUNC_SPI);
+    gpio_init(max6675->cs_pin);
+    gpio_set_dir(max6675->cs_pin, GPIO_OUT);
+    gpio_put(max6675->cs_pin, 1); // Desactivar el chip al inicio
+
+    spi_set_format(max6675->spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB);
+
+    return max6675;
+}
+
+void MAX6675Free(MAX6675 *max6675) {
+    if (max6675) {
+        free(max6675);
+    }
+}
+
+void MAX6675SetScale(MAX6675 *max6675, MAX6675TempScale scale) {
+    if (max6675) {
+        max6675->scale = scale;
+    }
+}
+
+MAX6675TempScale MAX6675GetScale(MAX6675 *max6675) {
+    if (max6675) {
+        return max6675->scale;
+    }
+    return MAX6675_CELSIUS;
+}
+
+float MAX6675GetTempC(MAX6675 *max6675) {
+    if (!max6675) {
+        return 0.0f;
+    }
+
+    uint8_t buffer[2] = {0};
+
+    gpio_put(max6675->cs_pin, 0); // Seleccionar el dispositivo
+    spi_read_blocking(max6675->spi, 0, buffer, 2);
+    gpio_put(max6675->cs_pin, 1); // Desactivar el dispositivo
+
+    uint16_t reading = (buffer[0] << 8) | buffer[1];
+    reading >>= 3;
+
+    return reading * 0.25f;
+}
+
+float MAX6675GetTempK(MAX6675 *max6675) {
+    return MAX6675GetTempC(max6675) + 273.15f;
+}
+
+float MAX6675GetTempF(MAX6675 *max6675) {
+    return (MAX6675GetTempC(max6675) * 1.8f) + 32.0f;
+}
+
+float MAX6675GetTemp(MAX6675 *max6675) {
+    if (max6675) {
+        switch (max6675->scale) {
+            case MAX6675_KELVIN:
+                return MAX6675GetTempK(max6675);
+
+            case MAX6675_FAHRENHEIT:
+                return MAX6675GetTempF(max6675);
+
+            default:
+                return MAX6675GetTempC(max6675);
+        }
+    }
+    return 0.0f;
+}
+
+int main() {
+    stdio_init_all();
+    
+    MAX6675 *sensor = MAX6675Setup(0);
+
+    if (!sensor) {
+        printf("Failed to initialize MAX6675 sensor\n");
+        return 1;
+    }
+
+    while (true) {
+        float temperature = MAX6675GetTemp(sensor);
+        printf("Temperature: %.2f\n", temperature);
+        sleep_ms(1000);
+    }
+
+    MAX6675Free(sensor);
+    return 0;
+}
